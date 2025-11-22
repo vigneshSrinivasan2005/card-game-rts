@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 // --- OS-SPECIFIC NETWORKING HEADERS AND MACROS ---
 
@@ -14,6 +16,7 @@
     #include <sys/socket.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
+    #include <netdb.h>   
     #include <unistd.h>
     #include <cstring>
 
@@ -30,14 +33,20 @@
     #define EXPORT_API __attribute__((visibility("default"))) // For .dylib
 #endif
 
+using namespace std;
+
+SocketHandle gSocket = -1;
+static vector<Command> gCommandBuffer;
+static vector<Command> unprocessedCommands;
+
 extern "C" EXPORT_API bool Connect(const char* address, int port);
 extern "C" EXPORT_API void AddLocalCommand(int unit_id, int command_type, double target_x, double target_y);
 extern "C" EXPORT_API bool SendStep();
 extern "C" EXPORT_API bool GetNextCommand(char* buffer, int buffer_size); // Simplified return signature
 
 typedef struct {
-    int unit_id;
-    int command_type;
-    double target_x;
-    double target_y;
+    uint32_t unit_id; //4 bytes
+    uint32_t command_type; //4 bytes
+    double target_x; //8 bytes
+    double target_y; //8 bytes
 } Command;
