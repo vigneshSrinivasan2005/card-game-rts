@@ -1,5 +1,7 @@
 #include "client.h"
 
+SocketHandle gSocket = -1;
+
 
 bool Connect(const char* address, int port){
     #ifdef _WIN32  // windows specific initialization
@@ -13,6 +15,7 @@ bool Connect(const char* address, int port){
     //in windows SOCKET returns INVALID_SOCKET on error, in Mac/Linux it returns -1
     #ifdef _WIN32
         if (sock == INVALID_SOCKET) {
+            WSACleanup();
             return false;
         }
     #else
@@ -23,6 +26,9 @@ bool Connect(const char* address, int port){
 
 	struct hostent* host = gethostbyname(address);
 	if (host == nullptr) {
+        #ifdef _WIN32
+            WSACleanup();
+        #endif
         CLOSE_SOCKET(sock);
         return false;
     }
@@ -34,6 +40,9 @@ bool Connect(const char* address, int port){
 	sendSockAddr.sin_port = htons(port);  // set the port
 
     if (connect(sock, (sockaddr*)&sendSockAddr, sizeof(sendSockAddr)) != 0) {
+        #ifdef _WIN32
+            WSACleanup();
+        #endif
         CLOSE_SOCKET(sock);
         return false;
     }
@@ -45,10 +54,20 @@ void AddLocalCommand(int unit_id, int command_type, double target_x, double targ
     Command cmd;
     cmd.unit_id = unit_id;
     cmd.command_type = command_type;
+    cmd.unit_type = 0;//unused here
     cmd.target_x = target_x;
     cmd.target_y = target_y;
     gCommandBuffer.push_back(cmd);
-    unprocessedCommands.push_back(cmd); //is this smart? //TODO CHECK
+}
+
+void addPlaceCommand(int unit_type, double target_x, double target_y){
+    Command cmd;
+    cmd.unit_id = 0; //reusing unit_id to store unit_type for place command
+    cmd.command_type = 3; //3 means place
+    cmd.unit_type = unit_type;
+    cmd.target_x = target_x;
+    cmd.target_y = target_y;
+    gCommandBuffer.push_back(cmd);
 }
 
 bool SendStep(){
@@ -66,20 +85,60 @@ bool SendStep(){
         return false;
     }
     //wait for response from the server with the oppoenent's commands
-    uint32_t num_opp_commands = 0;
-    ssize_t bytes_received = recv(gSocket, (char*)&num_opp_commands, sizeof(num_opp_commands), 0);
-    if (bytes_received <= 0) {
+    uint32_t num_acked_commands = 0;
+    bool success = RecieveData((char*)&num_acked_commands,sizeof(num_acked_commands));
+    if (!success) {
         return false;
     }
 
-    for (uint32_t i = 0; i < num_opp_commands; ++i) {
-        Command cmd;
-        bytes_received = recv(gSocket, (char*)&cmd, sizeof(Command), 0);
+    vector<char> ackedCommands(num_acked_commands * sizeof(Command));
+    if(!RecieveData(ackedCommands.data(), ackedCommands.size()))
+        return false;
+
+    unprocessedCommands.clear();  
+    if (num_acked_commands > 0) {
+        unprocessedCommands.resize(num_acked_commands);
+        // Copy the entire memory block into the vector of Command structs
+        std::memcpy(unprocessedCommands.data(), ackedCommands.data(), ackedCommands.size());
+    }
+
+    gCommandBuffer.clear(); // Clear the command buffer after sending
+    
+    return true;
+}
+
+bool RecieveData(char* buffer , int expected_size){ 
+    if (gSocket == -1) {
+        return false; // Not connected
+    }
+    ssize_t bytes_received = 0;
+    while(bytes_received < expected_size){
+        bytes_received += recv(gSocket, buffer + bytes_received, expected_size - bytes_received, 0);
         if (bytes_received <= 0) {
             return false;
         }
-        unprocessedCommands.push_back(cmd);
     }
-    gCommandBuffer.clear(); // Clear the command buffer after sending
+    return bytes_received > 0;
+}
+bool hasUnprocessedCommands(){
+    return !unprocessedCommands.empty();
+}
+
+bool GetNextCommand(char* buffer){ // Assume buffer is large enough to hold a Command
+    if (unprocessedCommands.empty()) {
+        return false; // No commands available
+    }
+    Command cmd = unprocessedCommands.front();
+    unprocessedCommands.erase(unprocessedCommands.begin());
+    memcpy(buffer, &cmd, sizeof(Command));
     return true;
+}
+void Cleanup(){
+    if (gSocket != -1) {
+        CLOSE_SOCKET(gSocket);
+        gSocket = -1;
+    }
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
 }
