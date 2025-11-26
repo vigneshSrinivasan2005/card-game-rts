@@ -18,6 +18,10 @@ typedef struct {
 
     typedef SOCKET SocketHandle; // Define a consistent type for sockets
     #define CLOSE_SOCKET(s) closesocket(s) 
+
+    #include <BaseTsd.h> 
+    typedef SSIZE_T ssize_t;
+
 #else // Assume macOS/Linux (POSIX)
     #include <sys/socket.h>
     #include <netinet/in.h>
@@ -25,7 +29,8 @@ typedef struct {
     #include <netdb.h>   
     #include <unistd.h>
     #include <cstring>
-
+    #include <sys/types.h>
+    
     typedef int SocketHandle; //use a type for the sockets
     #define CLOSE_SOCKET(s) close(s)
 #endif 
