@@ -4,3 +4,7 @@
 *.dll
 *.gch
 *.o
+*.obj
+*.lib
+*.dll
+*.exp
