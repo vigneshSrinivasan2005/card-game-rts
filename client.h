@@ -3,7 +3,13 @@
 #include <vector>
 #include <algorithm>
 
-// --- OS-SPECIFIC NETWORKING HEADERS AND MACROS ---
+typedef struct {
+    uint32_t unit_id; //4 bytes //0 means no id yet 
+    uint32_t command_type; //4 bytes 1 means move 2 means attack 3 means place
+    uint32_t unit_type; //4 bytes used only for place command
+    double target_x; //8 bytes
+    double target_y; //8 bytes
+} Command;
 
 #ifdef _WIN32 // Check if compiling on Windows
     #include <winsock2.h>
@@ -47,10 +53,4 @@ extern "C" EXPORT_API bool GetNextCommand(char* buffer, int buffer_size); // Sim
 extern "C" EXPORT_API bool hasUnprocessedCommands();
 extern "C" EXPORT_API void Cleanup();
 
-typedef struct {
-    uint32_t unit_id; //4 bytes //0 means no id yet 
-    uint32_t command_type; //4 bytes 1 means move 2 means attack 3 means place
-    uint32_t unit_type; //4 bytes used only for place command
-    double target_x; //8 bytes
-    double target_y; //8 bytes
-} Command;
+bool RecieveData(char* buffer , int expected_size);
