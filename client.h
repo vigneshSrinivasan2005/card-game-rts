@@ -50,7 +50,7 @@ extern SocketHandle gSocket;
 static vector<Command> gCommandBuffer;
 static vector<Command> unprocessedCommands;
 
-extern "C" EXPORT_API bool Connect(const char* address, int port);
+extern "C" EXPORT_API bool DLLConnect(const char* address, int port);
 extern "C" EXPORT_API void AddLocalCommand(int unit_id, int command_type, double target_x, double target_y);
 extern "C" EXPORT_API void addPlaceCommand(int unit_type, double target_x, double target_y);
 extern "C" EXPORT_API bool SendStep();

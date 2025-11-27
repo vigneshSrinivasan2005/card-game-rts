@@ -3,7 +3,7 @@
 SocketHandle gSocket = -1;
 
 
-bool Connect(const char* address, int port){
+bool DLLConnect(const char* address, int port){
     #ifdef _WIN32  // windows specific initialization
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
