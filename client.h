@@ -30,7 +30,7 @@ typedef struct {
     #include <unistd.h>
     #include <cstring>
     #include <sys/types.h>
-    
+
     typedef int SocketHandle; //use a type for the sockets
     #define CLOSE_SOCKET(s) close(s)
 #endif 
@@ -54,7 +54,7 @@ extern "C" EXPORT_API bool Connect(const char* address, int port);
 extern "C" EXPORT_API void AddLocalCommand(int unit_id, int command_type, double target_x, double target_y);
 extern "C" EXPORT_API void addPlaceCommand(int unit_type, double target_x, double target_y);
 extern "C" EXPORT_API bool SendStep();
-extern "C" EXPORT_API bool GetNextCommand(char* buffer, int buffer_size); // Simplified return signature
+extern "C" EXPORT_API bool GetNextCommand(char* buffer);
 extern "C" EXPORT_API bool hasUnprocessedCommands();
 extern "C" EXPORT_API void Cleanup();
 
