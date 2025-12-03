@@ -4,14 +4,17 @@
 #include <cstdint> 
 #include <vector>
 
-
-typedef struct {
-    uint32_t unit_id; //4 bytes //0 means no id yet 
-    uint32_t command_type; //4 bytes 1 means move 2 means attack 3 means place
-    uint32_t unit_type; //4 bytes used only for place command
-    double target_x; //8 bytes
-    double target_y; //8 bytes
-} Command;
+// --- Command Structure ---
+// This must match the server's 28-byte layout
+#pragma pack(push, 1)
+struct Command {
+    uint32_t unit_id;
+    uint32_t command_type;
+    uint32_t unit_type;
+    double   target_x;
+    double   target_y;
+};
+#pragma pack(pop)
 
 // --- GLOBAL CONSTANTS ---
 
