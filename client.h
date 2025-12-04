@@ -50,12 +50,12 @@ extern SocketHandle gSocket;
 static vector<Command> gCommandBuffer;
 static vector<Command> unprocessedCommands;
 
-extern "C" EXPORT_API bool DLLConnect(const char* address, int port);
-extern "C" EXPORT_API void AddLocalCommand(int unit_id, int command_type, double target_x, double target_y);
+extern "C" EXPORT_API double DLLConnect(const char* address, double port_double);
+/*extern "C" EXPORT_API void AddLocalCommand(int unit_id, int command_type, double target_x, double target_y);
 extern "C" EXPORT_API void addPlaceCommand(int unit_type, double target_x, double target_y);
 extern "C" EXPORT_API bool SendStep();
 extern "C" EXPORT_API bool GetNextCommand(char* buffer);
 extern "C" EXPORT_API bool hasUnprocessedCommands();
-extern "C" EXPORT_API void Cleanup();
+extern "C" EXPORT_API void Cleanup();*/
 
 bool RecieveData(char* buffer , int expected_size);

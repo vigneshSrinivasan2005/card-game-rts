@@ -3,34 +3,35 @@
 SocketHandle gSocket = -1;
 
 
-bool DLLConnect(const char* address, int port){
+int DLLConnect(const char* address, int port){
+
     #ifdef _WIN32  // windows specific initialization
         WSADATA wsaData;
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+
+        /*if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
             cerr << "WSAStartup failed." << endl;
             return false;
-        }
+        }*/
     #endif
     SocketHandle sock = socket(AF_INET, SOCK_STREAM, 0);
     //in windows SOCKET returns INVALID_SOCKET on error, in Mac/Linux it returns -1
     #ifdef _WIN32
         if (sock == INVALID_SOCKET) {
             WSACleanup();
-            return false;
+            return 0;
         }
     #else
         if (sock == -1) {
-            return false;
+            return 0;
         }
     #endif
-
 	struct hostent* host = gethostbyname(address);
 	if (host == nullptr) {
         #ifdef _WIN32
             WSACleanup();
         #endif
         CLOSE_SOCKET(sock);
-        return false;
+        return 1;
     }
 	sockaddr_in sendSockAddr;
 	memset((char*) &sendSockAddr, 0, sizeof(sendSockAddr));
@@ -44,10 +45,10 @@ bool DLLConnect(const char* address, int port){
             WSACleanup();
         #endif
         CLOSE_SOCKET(sock);
-        return false;
+        return 2;
     }
     gSocket = sock;
-    return true;
+    return 3;
 }
 
 void AddLocalCommand(int unit_id, int command_type, double target_x, double target_y){
