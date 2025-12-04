@@ -27,7 +27,6 @@
     #define CLOSE_SOCKET(s) close(s)
 #endif
 
-#endif
 
 #include <cstdint> 
 #include <vector>
