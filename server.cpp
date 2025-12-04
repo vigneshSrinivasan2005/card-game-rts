@@ -7,21 +7,25 @@
 #include <netinet/in.h> 
 #include <arpa/inet.h>  
 #include <signal.h>  // For signal handling
-#include <pthread.h> // NEW: POSIX Threads library
+#include <pthread.h> // POSIX Threads library
 #include <cstdlib>   // For exit()
 #include <iostream>
-#include <atomic>
+#include <atomic>    // For thread-safe counters
+#include <vector>
 
 using namespace std;
 
-// Multithreaded Match arguments
+// --- SHARED ARGUMENT STRUCTURE ---
 struct MatchArgs {
     int client1_sock;
     int client2_sock;
 };
 
-atomic<uint32_t> g_NextUnitID (1000); 
-int g_server_sock = -1; // Globalize the listening socket for cleanup
+// --- SERVER GLOBAL STATE ---
+// REMOVED: Global Unit ID counters. These must be local to each match.
+int g_server_sock = -1; 
+
+// --- RELIABLE I/O HELPERS ---
 
 bool SendData(int sock, const char* buffer, int size) {
     int total_sent = 0;
@@ -48,7 +52,8 @@ bool RecvData(int sock, char* buffer, int expected_size) {
 }
 
 
-// multithreaded method to handle a match between two players
+// --- CORE MATCH LOGIC ---
+
 void* HandleMatch(void* args) {
     MatchArgs* match_args = static_cast<MatchArgs*>(args);
     int client1_sock = match_args->client1_sock;
@@ -59,85 +64,98 @@ void* HandleMatch(void* args) {
     int current_tick = 0;
     const uint32_t COMMAND_TYPE_PLACE = 3;
 
-    cout << "[MATCH " << client1_sock << " vs " << client2_sock << "] Match started." << endl;
+    // --- MATCH LOCAL STATE ---
+    // These counters are specific to THIS match only.
+    // This ensures every match starts with clean IDs (1000/2000).
+    // It also prevents "global" counters from overflowing into the wrong team range.
+    uint32_t next_unit_id_p0 = 1000; 
+    uint32_t next_unit_id_p1 = 2000;
 
+    cout << "[MATCH " << client1_sock << " vs " << client2_sock << "] Match started." << endl;
+    
+    // Deterministic Lockstep Loop:
+    // 1. Receive commands from both players
+    // 2. Assign global unit IDs for any "Place" commands
+    // 3. Broadcast ALL commands to BOTH players
+    
     while (true) {
         current_tick++;
-        cout << "\n[MATCH " << client1_sock << "] === TICK " << current_tick << " START === " << endl;
-        
-        // 1. RECEIVE PHASE (Blocks until both players submit input)
+        // cout << "\n[MATCH " << client1_sock << "] === TICK " << current_tick << " START === " << endl;
+
+        // Store requests from both players
         vector<Command> requests[MAX_PLAYERS]; 
         bool match_error = false;
-
-        for (int i = 0; i < MAX_PLAYERS; ++i) { // i = Player Index (0 or 1)
+        
+        // 1. RECEIVE PHASE
+        for (int i = 0; i < MAX_PLAYERS; ++i) {
+            // Recieve number of commands first
             uint32_t count = 0;
-            cout << "[MATCH " << client1_sock << "] Waiting for input from Player " << i + 1 << "..." << endl;
             if (!RecvData(clientSockets[i], (char*)&count, sizeof(count))) {
-                cerr << "[MATCH " << client1_sock << "] Player " << i + 1 << " disconnected. Ending match." << endl;
+                cerr << "[MATCH " << client1_sock << "] Player " << i << " disconnected. Ending match." << endl;
                 match_error = true;
                 break; 
             }
-
-            cout << "[MATCH " << client1_sock << "] Player " << i + 1 << " sent " << count << " commands." << endl;
-
+            
+            // Recieve the actual command data
             int data_size = count * sizeof(Command);
             requests[i].resize(count);
-            if (!RecvData(clientSockets[i], (char*)requests[i].data(), data_size)) {
-                cerr << "[MATCH " << client1_sock << "] Player " << i + 1 << " data error. Ending match." << endl;
-                match_error = true;
-                break; 
+            if (data_size > 0) {
+                if (!RecvData(clientSockets[i], (char*)requests[i].data(), data_size)) {
+                    cerr << "[MATCH " << client1_sock << "] Player " << i << " data error. Ending match." << endl;
+                    match_error = true;
+                    break; 
+                }
             }
         }
         
         if (match_error) break;
 
-        // 2. PROCESSING AND ID ASSIGNMENT PHASE (NO VALIDATION)
-        cout << "[MATCH " << client1_sock << "] Processing commands..." << endl;
+        // 2. PROCESSING PHASE
         vector<Command> finalized_commands;
         
-        for (int i = 0; i < MAX_PLAYERS; ++i) { // i = Sender's Index (0 or 1)
+        // Combine all commands into one list.
+        for (int i = 0; i < MAX_PLAYERS; ++i) {
             for (Command& cmd : requests[i]) {
                 
+                // If it's a "Place Unit" command, the Server assigns the ID.
                 if (cmd.command_type == COMMAND_TYPE_PLACE) {
-                    // --- PLACE: Assign global ID (No ownership check needed) ---
-                    // Assign the next available global ID thread-safely
-                    cmd.unit_id = g_NextUnitID.fetch_add(1); 
-                    cout << "[MATCH " << client1_sock << "]  > Player " << i + 1 << " PLACE command. New Unit ID: " << cmd.unit_id << endl;
-                } else {
-                    cout << "[MATCH " << client1_sock << "]  > Player " << i + 1 << " command (Type: " << cmd.command_type << ", Unit: " << cmd.unit_id << ")" << endl;
+                    if (i == 0) {
+                        // Player 0 (Host) gets IDs 1000+
+                        cmd.unit_id = next_unit_id_p0++; 
+                        cout << "[MATCH] P0 Placed Unit. ID assigned: " << cmd.unit_id << endl;
+                    } else {
+                        // Player 1 (Client) gets IDs 2000+
+                        cmd.unit_id = next_unit_id_p1++; 
+                        cout << "[MATCH] P1 Placed Unit. ID assigned: " << cmd.unit_id << endl;
+                    }
                 }
-
-                // Since there is no validation, all received commands are broadcasted.
+                
                 finalized_commands.push_back(cmd);
             }
         }
         
         // 3. BROADCAST PHASE
-        
         uint32_t total_count = finalized_commands.size();
-        cout << "[MATCH " << client1_sock << "] Broadcasting " << total_count << " finalized commands to both players." << endl;
         int total_data_size = total_count * sizeof(Command);
 
         for (int i = 0; i < MAX_PLAYERS; ++i) {
             if (!SendData(clientSockets[i], (const char*)&total_count, sizeof(total_count)) ||
-                !SendData(clientSockets[i], (const char*)finalized_commands.data(), total_data_size)) {
-                cerr << "[MATCH " << client1_sock << "] Error broadcasting to Player " << i + 1 << endl;
+                (total_count > 0 && !SendData(clientSockets[i], (const char*)finalized_commands.data(), total_data_size))) {
+                cerr << "[MATCH " << client1_sock << "] Error broadcasting to Player " << i << endl;
                 match_error = true;
                 break;
             }
         }
 
         if (match_error) break;
-        cout << "[MATCH " << client1_sock << "] === TICK " << current_tick << " END === " << endl;
     }
 
     // Match thread cleanup
     cout << "[MATCH " << client1_sock << " vs " << client2_sock << "] Match ended. Closing sockets." << endl;
     close(client1_sock);
     close(client2_sock);
-    return NULL; 
+    return NULL; // no return value
 }
-
 
 
 bool ListenForPlayers(int port) {
@@ -147,7 +165,6 @@ bool ListenForPlayers(int port) {
         return false;
     }
 
-    // ... (Socket setup remains the same) ...
     sockaddr_in serverAddress;
     memset(&serverAddress, 0, sizeof(serverAddress));
     serverAddress.sin_family = AF_INET;
@@ -174,7 +191,7 @@ bool ListenForPlayers(int port) {
     while (true) {
         int client1_sock = -1;
         int client2_sock = -1;
-        pthread_t match_thread_id; // pthread declaration
+        pthread_t match_thread_id; 
 
         cout << "Waiting for Player 1..." << endl;
         client1_sock = accept(g_server_sock, NULL, NULL);
@@ -189,20 +206,34 @@ bool ListenForPlayers(int port) {
         }
         cout << "Player 2 connected (Socket ID: " << client2_sock << ")." << endl;
 
-        // NEW: 1. Allocate arguments on the heap
+        // --- HANDSHAKE: Send Player IDs ---
+        cout << "Sending Player IDs (P0=0, P1=1)..." << endl;
+        uint32_t player0_id = 0;
+        uint32_t player1_id = 1;
+        
+        // Send ID 0 to Player 1 (Host)
+        if (!SendData(client1_sock, (const char*)&player0_id, sizeof(player0_id))) {
+            cerr << "Error sending ID to Player 1. Closing." << endl;
+            close(client1_sock); close(client2_sock); continue;
+        }
+        // Send ID 1 to Player 2 (Client)
+        if (!SendData(client2_sock, (const char*)&player1_id, sizeof(player1_id))) {
+            cerr << "Error sending ID to Player 2. Closing." << endl;
+            close(client1_sock); close(client2_sock); continue;
+        }
+
+        // --- LAUNCH MATCH ---
         MatchArgs* args = new MatchArgs{client1_sock, client2_sock};
         
-        // NEW: 2. Launch the match logic using pthread_create
         if (pthread_create(&match_thread_id, NULL, HandleMatch, args) != 0) {
             cerr << "Error creating thread for new match." << endl;
-            delete args; // Clean up arguments
+            delete args; 
             close(client1_sock);
             close(client2_sock);
             continue;
         }
 
-        pthread_detach(match_thread_id); //allow to run independently
-
+        pthread_detach(match_thread_id); // Allow thread to run independently
         cout << "--- New Match Launched ---" << endl;
     }
 
@@ -219,10 +250,7 @@ void cleanup_and_exit(int sig) {
 }
 
 int main(int argc, char* argv[]) {
-    
     signal(SIGINT, cleanup_and_exit);
-    
     ListenForPlayers(SERVER_PORT);
-    
     return 0;
 }
