@@ -1,138 +1,78 @@
 #include "lobby.h"
-#include "game_instance.h"
 #include "shared.h"
 #include <iostream>
-#include <sstream>
 #include <cstring>
-#include <unistd.h>
+#include <vector>
+#include <pthread.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
+#include <signal.h>
 
 using namespace std;
 
-// Helper to send text with newline
-static bool SendText(int sock, string msg) {
-    msg += "\n";
-    return send(sock, msg.c_str(), msg.length(), 0) > 0;
+// --- GLOBAL VARIABLE DEFINITIONS ---
+// These are declared 'extern' in shared.h, but MUST be defined (created) here.
+std::vector<GameRoom> g_Games;
+pthread_mutex_t g_LobbyMutex = PTHREAD_MUTEX_INITIALIZER;
+int g_server_sock = -1;
+
+void cleanup_and_exit(int sig) {
+    cout << "\nServer shutting down..." << endl;
+    if (g_server_sock != -1) close(g_server_sock);
+    exit(0);
 }
 
-// Global ID counter for rooms
-static int g_GameIDCounter = 1;
+int main(int argc, char* argv[]) {
+    signal(SIGINT, cleanup_and_exit);
 
-void* HandleClientLobby(void* arg) {
-    int mySock = *(int*)arg;
-    delete (int*)arg;
+    int port = 8080;
+    g_server_sock = socket(AF_INET, SOCK_STREAM, 0);
     
-    char buffer[1024];
-    bool inLobby = true;
-    bool shouldCloseSocket = true; // Default to true, set to false if we pass socket to Game
-
-    SendText(mySock, "WELCOME. Commands: REGISTER <user> <pass>, LIST, CREATE, JOIN <id>");
-
-    while (inLobby) {
-        memset(buffer, 0, 1024);
-        int bytes = recv(mySock, buffer, 1024, 0);
-        if (bytes <= 0) break; 
-
-        string input(buffer);
-        stringstream ss(input);
-        string cmd;
-        ss >> cmd;
-
-        // --- 1. REGISTER ---
-        if (cmd == "REGISTER") {
-            string user, pass;
-            ss >> user >> pass;
-            // (Persistence would go here)
-            SendText(mySock, "OK Registered " + user);
-        }
-        // --- 2. LIST ---
-        else if (cmd == "LIST") {
-            pthread_mutex_lock(&g_LobbyMutex);
-            string list = "GAMES:\n";
-            for (const auto& g : g_Games) {
-                if (!g.isFull && g.isActive) {
-                    list += "ID: " + to_string(g.id) + " | Status: WAIT\n";
-                }
-            }
-            pthread_mutex_unlock(&g_LobbyMutex);
-            SendText(mySock, list);
-        }
-        // --- 3. CREATE ---
-        else if (cmd == "CREATE") {
-            pthread_mutex_lock(&g_LobbyMutex);
-            int newID = g_GameIDCounter++;
-            GameRoom room = { newID, mySock, -1, false, true };
-            g_Games.push_back(room);
-            pthread_mutex_unlock(&g_LobbyMutex);
-
-            SendText(mySock, "CREATED " + to_string(newID) + " WAIT...");
-
-            // HOST WAITING LOOP
-            while (true) {
-                usleep(100000); // 100ms polling
-                pthread_mutex_lock(&g_LobbyMutex);
-                
-                GameRoom* myRoom = nullptr;
-                for (auto& g : g_Games) {
-                    if (g.id == newID) { myRoom = &g; break; }
-                }
-
-                if (myRoom && myRoom->isFull) {
-                    // Match found!
-                    SendText(mySock, "MATCH_START");
-                    
-                    // Host thread takes over as the Game Server thread
-                    MatchArgs* args = new MatchArgs{ myRoom->hostSocket, myRoom->joinerSocket };
-                    
-                    pthread_mutex_unlock(&g_LobbyMutex);
-                    
-                    // TRANSITION TO GAME
-                    HandleMatch(args); 
-                    
-                    inLobby = false;
-                    shouldCloseSocket = false; // HandleMatch closes them
-                    break;
-                }
-                pthread_mutex_unlock(&g_LobbyMutex);
-            }
-        }
-        // --- 4. JOIN ---
-        else if (cmd == "JOIN") {
-            int joinID;
-            ss >> joinID;
-            
-            pthread_mutex_lock(&g_LobbyMutex);
-            bool found = false;
-            for (auto& g : g_Games) {
-                if (g.id == joinID && !g.isFull) {
-                    g.joinerSocket = mySock;
-                    g.isFull = true;
-                    found = true;
-                    
-                    // Notify Joiner
-                    SendText(mySock, "MATCH_START");
-                    
-                    // The Joiner thread RETIRES here. 
-                    // The Host thread will run the game for us.
-                    inLobby = false;
-                    shouldCloseSocket = false; // Do not close, Host thread owns it now
-                    break;
-                }
-            }
-            pthread_mutex_unlock(&g_LobbyMutex);
-            
-            if (!found) SendText(mySock, "ERROR Game full/missing.");
-        }
-        // --- 5. CHAT ---
-        else if (cmd == "CHAT") {
-            string msg;
-            getline(ss, msg);
-            SendText(mySock, "ECHO: " + msg);
-        }
+    if (g_server_sock < 0) {
+        cerr << "Socket creation failed" << endl;
+        return 1;
     }
 
-    if (shouldCloseSocket) {
-        close(mySock);
+    sockaddr_in serverAddress;
+    memset(&serverAddress, 0, sizeof(serverAddress));
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = INADDR_ANY;
+    serverAddress.sin_port = htons(port);
+
+    int opt = 1;
+    setsockopt(g_server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    if (bind(g_server_sock, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) < 0) {
+        cerr << "Bind failed on port " << port << endl;
+        return 1;
     }
-    return NULL;
+
+    if (listen(g_server_sock, 100) < 0) {
+        cerr << "Listen failed" << endl;
+        return 1;
+    }
+
+    cout << "--- RTS SERVER ONLINE ---" << endl;
+    cout << "Listening on port " << port << endl;
+
+    while (true) {
+        int clientSock = accept(g_server_sock, NULL, NULL);
+        if (clientSock < 0) continue;
+        
+        cout << "New Client Connected: " << clientSock << endl;
+
+        // Spawn a Lobby Thread for the new client
+        int* arg = new int(clientSock);
+        pthread_t t;
+        // We call the function from lobby.cpp
+        if (pthread_create(&t, NULL, HandleClientLobby, arg) != 0) {
+            cerr << "Failed to create thread" << endl;
+            delete arg;
+            close(clientSock);
+        } else {
+            pthread_detach(t);
+        }
+    }
+    return 0;
 }
