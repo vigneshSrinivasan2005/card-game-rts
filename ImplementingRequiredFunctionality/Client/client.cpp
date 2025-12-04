@@ -70,38 +70,53 @@ extern "C" {
     // --- 2. LOBBY TEXT FUNCTIONS ---
     
     EXPORT_API double SendLobbyMessage(const char* msg) {
-        if (gSocket == -1) return 0.0;
+        if (gSocket == -1) return 5.0;
         std::string message(msg);
         // Ensure connection handles packet boundaries (simple approach)
-        if (send(gSocket, message.c_str(), message.length(), 0) < 0) return 0.0;
+        if (send(gSocket, message.c_str(), message.length(), 0) < 0) return 4.0;
         return 1.0;
     }
 
     EXPORT_API double ReadLobbyMessage(char* buffer_out, double max_len) {
         if (gSocket == -1) return 0.0;
-        
-        // Peek to see if data is available (Non-blocking check optional, 
-        // but for GameMaker simpler to just try recv)
+
+        // 1. NON-BLOCKING CHECK
+        // Check if data is waiting so we don't freeze the game
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(gSocket, &readfds);
+        struct timeval timeout = {0, 0}; // 0 seconds, 0 microseconds
+
+        // On Windows, the first argument (nfds) is ignored, but on Linux it matters.
+        // using gSocket + 1 satisfies Linux requirements.
+        int activity = select(gSocket + 1, &readfds, NULL, NULL, &timeout);
+
+        if (activity <= 0) {
+            return 0.0; // No data waiting, return immediately
+        }
+
+        // 2. DATA IS READY -> READ IT
         char temp_buffer[1024];
         memset(temp_buffer, 0, 1024);
         
-        // This is a simplified text receiver. In production, you'd buffer until '\n'.
-        // For this assignment, we assume the server sends one clean packet.
+        // We know data is there, so recv won't block
         int bytes = recv(gSocket, temp_buffer, 1023, 0);
-        
+
         if (bytes > 0) {
-            temp_buffer[bytes] = '\0'; // Null terminate
+            temp_buffer[bytes] = '\0'; // Force null termination safety
+            
             // Copy to GameMaker buffer safely
             int copy_len = bytes;
             if (copy_len > (int)max_len) copy_len = (int)max_len;
+            
             memcpy(buffer_out, temp_buffer, copy_len);
-            buffer_out[copy_len] = '\0'; 
-            return 1.0; // Message received
+            buffer_out[copy_len] = '\0'; // Ensure GM string is null terminated
+            
+            return 1.0; // Success: Message received
         }
         
-        return 0.0; // No message or error
+        return 0.0; // Disconnected or Empty
     }
-
     // --- 3. TRANSITION TO GAME ---
     // Call this ONLY after receiving "MATCH_START" text
     EXPORT_API double WaitForGameStart() {
