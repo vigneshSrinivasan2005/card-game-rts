@@ -50,7 +50,7 @@ void* HandleMatch(void* args) {
     // --- 1. HANDSHAKE (Send Player IDs) ---
     uint32_t p1_id = 0;
     uint32_t p2_id = 1;
-
+    usleep(100000);
     // We send these strictly as binary data
     if (!SendData(client1_sock, (const char*)&p1_id, sizeof(p1_id))) {
         cerr << "[GAME_INSTANCE] Error sending Handshake to P1" << endl;
