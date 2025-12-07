@@ -11,19 +11,38 @@
 
 using namespace std;
 
-// --- GLOBAL VARIABLE DEFINITIONS ---
-// These are declared 'extern' in shared.h, but MUST be defined (created) here.
-std::vector<GameRoom> g_Games;
-pthread_mutex_t g_LobbyMutex = PTHREAD_MUTEX_INITIALIZER;
+
 int g_server_sock = -1;
 
 void cleanup_and_exit(int sig) {
+    // Remove all active client connections
+    pthread_mutex_lock(&g_LobbyMutex);
+    
+    // Iterate over a copy of the keys to avoid issues if the original map changes
+    vector<int> sockets_to_close;
+    for(const auto& pair : connected_Users) {
+        sockets_to_close.push_back(pair.first);
+    }
+    pthread_mutex_unlock(&g_LobbyMutex);
+
+    cout << "\nClosing " << sockets_to_close.size() << " active client connections..." << endl;
+    for (int sock : sockets_to_close) {
+        close(sock);
+    }
+    
     cout << "\nServer shutting down..." << endl;
+    saveAllUsers();
     if (g_server_sock != -1) close(g_server_sock);
     exit(0);
 }
 
 int main(int argc, char* argv[]) {
+    //Load all users from file
+    getAllUsers();
+
+    cout << "Loaded " << g_AllUsers.size() << " persistent users." << endl;
+
+
     signal(SIGINT, cleanup_and_exit);
 
     int port = 8080;

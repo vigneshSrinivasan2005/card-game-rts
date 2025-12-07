@@ -9,6 +9,7 @@
 SocketHandle gSocket = -1;
 std::vector<Command> gCommandBuffer;      
 std::vector<Command> unprocessedCommands; 
+static std::string g_ClientBuffer; // Persistent buffer to hold partial messages
 
 // --- Helper ---
 bool RecieveData(char* buffer, int expected_size) {
@@ -82,62 +83,80 @@ extern "C" {
         return 1.0;
     }
 
-    // NOTE: This ReadLobbyMessage implementation is simplistic (reads everything waiting) 
-    // and relies on the GML logic to parse out only one message (up to '\n').
+    
     EXPORT_API double ReadLobbyMessage(char* buffer_out, double max_len) {
         if (gSocket == -1) return 0.0;
-
-        // 1. NON-BLOCKING CHECK
+        // --- PHASE 1: Try to read new data into the persistent buffer ---
+        
+        // 1. NON-BLOCKING CHECK for new data
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(gSocket, &readfds);
         struct timeval timeout = {0, 0}; 
 
-        int activity = select(gSocket + 1, &readfds, NULL, NULL, &timeout);
-
-        if (activity <= 0) {
-            return 0.0; // No data waiting
-        }
-
-        // 2. DATA IS READY -> READ IT
-        char temp_buffer[1024];
-        memset(temp_buffer, 0, 1024);
-        
-        // We know data is there, so recv won't block
-        int bytes = recv(gSocket, temp_buffer, 1023, 0);
-
-        if (bytes > 0) {
-            temp_buffer[bytes] = '\0';
+        if (select(gSocket + 1, &readfds, NULL, NULL, &timeout) > 0) {
+            // Data is ready, call recv (which should not block now)
+            char temp_buffer[1024];
+            memset(temp_buffer, 0, 1024);
             
-            // Copy to GameMaker buffer
-            int copy_len = bytes;
-            if (copy_len > (int)max_len) copy_len = (int)max_len;
-            
-            memcpy(buffer_out, temp_buffer, copy_len);
-            buffer_out[copy_len] = '\0'; 
-            
-            return 1.0; // Success: Message received
+            // Read data without waiting.
+            int bytes = recv(gSocket, temp_buffer, 1024, 0);
+
+            if (bytes > 0) {
+                // Append all new data to the persistent buffer
+                g_ClientBuffer.append(temp_buffer, bytes);
+            } else if (bytes == 0) {
+                // Socket disconnected
+                gSocket = -1;
+                return -1.0; // Indicate disconnect
+            }
         }
         
-        return 0.0; // Disconnected or Empty
+        // --- PHASE 2: Scan the persistent buffer for a complete message ---
+        
+        // Look for the newline delimiter
+        size_t pos = g_ClientBuffer.find('\n');
+
+        if (pos != std::string::npos) {
+            // We found a complete message delimited by '\n'
+
+            // 1. Extract the message (up to and including the newline)
+            std::string message = g_ClientBuffer.substr(0, pos + 1);
+            
+            // 2. Remove the message from the start of the buffer
+            g_ClientBuffer.erase(0, pos + 1);
+
+            // 3. Copy to GameMaker buffer (ensure C-string termination)
+            int copy_len = message.length();
+            if (copy_len > (int)max_len) {
+                // Truncate if message exceeds GML buffer size
+                copy_len = (int)max_len;
+            }
+
+            // Copy the message (including the newline)
+            memcpy(buffer_out, message.c_str(), copy_len);
+            
+            // Ensure C-string termination at the end of the copied data
+            buffer_out[copy_len] = '\0';
+            
+            return (double)copy_len; // Success: Return number of bytes read
+        }
+        
+        return 0.0; // No complete message found yet (waiting for more data)
     }
     
     // --- 3. TRANSITION TO GAME (ACK Protocol) ---
-    // Call this ONLY after receiving "MATCH_START" and sending "READY\n"
     EXPORT_API double WaitForGameStart() {
         if (gSocket == -1) return -1.0;
 
         uint32_t my_player_id = 99; // Placeholder initialization
         
-        // CRITICAL: This blocks until the server sends the 4-byte Player ID.
-        // The server will ONLY send this AFTER receiving the "READY" ACK from BOTH clients.
         if (!RecieveData((char*)&my_player_id, sizeof(my_player_id))) {
             return -2.0; // Error or disconnection during handshake
         }
         return (double)my_player_id;
     }
 
-    // --- 4. GAME FUNCTIONS (Unchanged) ---
 
     EXPORT_API void AddLocalCommand(double unit_id, double cmd_type, double tx, double ty) {
         Command cmd;

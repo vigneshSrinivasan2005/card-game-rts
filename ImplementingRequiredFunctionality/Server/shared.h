@@ -5,6 +5,14 @@
 #include <string>
 #include <pthread.h>
 #include <cstdint>
+#include <unordered_map>
+#include <cstdio>
+#include <sstream>
+#include <cstring>
+#include <iostream>
+#include <sys/socket.h>
+
+using namespace std;
 
 // --- RTS PROTOCOL STRUCTURES ---
 #pragma pack(push, 1)
@@ -26,8 +34,35 @@ struct GameRoom {
     bool isActive;
 };
 
+struct User {
+    string username;
+    int numWins;
+};
+
+
 // --- GLOBAL SHARED STATE ---
-extern std::vector<GameRoom> g_Games;
+//USER MANAGEMENT
+extern unordered_map<string, User> g_AllUsers; //maps username to user
+extern unordered_map<int, User> connected_Users; // maps socket to user
+// use both g_games and connected_Users to figure out who is in lobby
+
+
+//GAME MANAGEMENT
+extern vector<GameRoom> g_Games;
+
+//MULTITHREADING MANAGEMENT
 extern pthread_mutex_t g_LobbyMutex;
+
+// Method to load and save userState
+void getAllUsers();
+void saveAllUsers();
+
+//method to send message to all users in lobby
+void sendToAllInLobby(const string& message);
+
+
+//helpers for all
+bool SendText(int sock, string msg);
+
 
 #endif // SHARED_H
