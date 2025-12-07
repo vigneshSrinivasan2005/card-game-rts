@@ -80,6 +80,28 @@ void* HandleClientLobby(void* arg) {
                     // Match found!
                     SendText(mySock, "MATCH_START");
                     
+                    char readyBuffer[1024];
+
+                    // 1. Wait for Host's ACK
+                    memset(readyBuffer, 0, 1024);
+                    if (recv(myRoom->hostSocket, readyBuffer, 1024, 0) <= 0) {
+                        cerr << "[LOBBY] Host " << myRoom->hostSocket << " disconnected during ACK handshake." << endl;
+                        pthread_mutex_unlock(&g_LobbyMutex);
+                        close(myRoom->hostSocket); close(myRoom->joinerSocket); // Close both on failure
+                        return NULL; 
+                    }
+
+                    // 2. Wait for Joiner's ACK
+                    memset(readyBuffer, 0, 1024);
+                    if (recv(myRoom->joinerSocket, readyBuffer, 1024, 0) <= 0) {
+                        cerr << "[LOBBY] Joiner " << myRoom->joinerSocket << " disconnected during ACK handshake." << endl;
+                        pthread_mutex_unlock(&g_LobbyMutex);
+                        close(myRoom->hostSocket); close(myRoom->joinerSocket);
+                        return NULL;
+                    }
+
+                    
+
                     // Host thread takes over as the Game Server thread
                     MatchArgs* args = new MatchArgs{ myRoom->hostSocket, myRoom->joinerSocket };
                     
@@ -102,6 +124,9 @@ void* HandleClientLobby(void* arg) {
             
             pthread_mutex_lock(&g_LobbyMutex);
             bool found = false;
+
+
+
             for (auto& g : g_Games) {
                 if (g.id == joinID && !g.isFull) {
                     g.joinerSocket = mySock;

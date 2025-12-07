@@ -4,6 +4,7 @@
 #include <iostream> 
 #include <string>
 
+
 // --- Global State ---
 SocketHandle gSocket = -1;
 std::vector<Command> gCommandBuffer;      
@@ -24,9 +25,12 @@ bool RecieveData(char* buffer, int expected_size) {
 extern "C" {
 
     // --- 1. CONNECT ---
-    // Now just opens the socket. Does NOT wait for Player ID.
     EXPORT_API double DLLConnect(const char* address, double port_double) {
         int port = (int)port_double;
+        
+        // Cleanup previous connection if necessary
+        if (gSocket != -1) { CLOSE_SOCKET(gSocket); gSocket = -1; }
+        
         #ifdef _WIN32
             WSADATA wsaData;
             if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return -1.0; 
@@ -46,7 +50,7 @@ extern "C" {
             #ifdef _WIN32
                 WSACleanup();
             #endif
-            return 1.0;
+            return 1.0; // Host not found error
         }
 
         sockaddr_in sendSockAddr;
@@ -60,7 +64,7 @@ extern "C" {
             #ifdef _WIN32
                 WSACleanup();
             #endif
-            return 2.0; 
+            return 2.0; // Connection failed
         }
 
         gSocket = sock;
@@ -72,27 +76,27 @@ extern "C" {
     EXPORT_API double SendLobbyMessage(const char* msg) {
         if (gSocket == -1) return 5.0;
         std::string message(msg);
-        // Ensure connection handles packet boundaries (simple approach)
+        
+        // Send the message, assuming the GML adds the necessary "\n"
         if (send(gSocket, message.c_str(), message.length(), 0) < 0) return 4.0;
         return 1.0;
     }
 
+    // NOTE: This ReadLobbyMessage implementation is simplistic (reads everything waiting) 
+    // and relies on the GML logic to parse out only one message (up to '\n').
     EXPORT_API double ReadLobbyMessage(char* buffer_out, double max_len) {
         if (gSocket == -1) return 0.0;
 
         // 1. NON-BLOCKING CHECK
-        // Check if data is waiting so we don't freeze the game
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(gSocket, &readfds);
-        struct timeval timeout = {0, 0}; // 0 seconds, 0 microseconds
+        struct timeval timeout = {0, 0}; 
 
-        // On Windows, the first argument (nfds) is ignored, but on Linux it matters.
-        // using gSocket + 1 satisfies Linux requirements.
         int activity = select(gSocket + 1, &readfds, NULL, NULL, &timeout);
 
         if (activity <= 0) {
-            return 0.0; // No data waiting, return immediately
+            return 0.0; // No data waiting
         }
 
         // 2. DATA IS READY -> READ IT
@@ -103,29 +107,32 @@ extern "C" {
         int bytes = recv(gSocket, temp_buffer, 1023, 0);
 
         if (bytes > 0) {
-            temp_buffer[bytes] = '\0'; // Force null termination safety
+            temp_buffer[bytes] = '\0';
             
-            // Copy to GameMaker buffer safely
+            // Copy to GameMaker buffer
             int copy_len = bytes;
             if (copy_len > (int)max_len) copy_len = (int)max_len;
             
             memcpy(buffer_out, temp_buffer, copy_len);
-            buffer_out[copy_len] = '\0'; // Ensure GM string is null terminated
+            buffer_out[copy_len] = '\0'; 
             
             return 1.0; // Success: Message received
         }
         
         return 0.0; // Disconnected or Empty
     }
-    // --- 3. TRANSITION TO GAME ---
-    // Call this ONLY after receiving "MATCH_START" text
+    
+    // --- 3. TRANSITION TO GAME (ACK Protocol) ---
+    // Call this ONLY after receiving "MATCH_START" and sending "READY\n"
     EXPORT_API double WaitForGameStart() {
         if (gSocket == -1) return -1.0;
 
-        uint32_t my_player_id = 99; 
-        // Now we perform the binary handshake
+        uint32_t my_player_id = 99; // Placeholder initialization
+        
+        // CRITICAL: This blocks until the server sends the 4-byte Player ID.
+        // The server will ONLY send this AFTER receiving the "READY" ACK from BOTH clients.
         if (!RecieveData((char*)&my_player_id, sizeof(my_player_id))) {
-            return -2.0; 
+            return -2.0; // Error or disconnection during handshake
         }
         return (double)my_player_id;
     }
