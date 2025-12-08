@@ -1,7 +1,7 @@
 #ifndef CLIENT_H
 #define CLIENT_H
 
-// --- Platform-Specific Setup ---
+//  Platform-Specific Setup 
 #ifdef _WIN32
     #define EXPORT_API __declspec(dllexport)
     #include <winsock2.h>

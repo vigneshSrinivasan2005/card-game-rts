@@ -6,12 +6,12 @@
 
 using namespace std;
 
-// --- Global State ---
+// Global State 
 SocketHandle gSocket = -1;
 std::vector<Command> gCommandBuffer;      
 std::vector<Command> unprocessedCommands; 
 
-// --- Helper ---
+//Helper
 bool RecieveData(char* buffer, int expected_size) {
     if (gSocket == -1) return false;
     ssize_t bytes_received = 0;
@@ -30,7 +30,7 @@ bool SendText(int sock, string msg){
 
 extern "C" {
 
-    // --- 1. CONNECT ---
+    // CONNECT
     EXPORT_API double DLLConnect(const char* address, double port_double) {
         int port = (int)port_double;
         
@@ -74,10 +74,10 @@ extern "C" {
         }
 
         gSocket = sock;
-        return 1.0; // Success! Connection open.
+        return 1.0; 
     }
 
-    // --- 2. LOBBY TEXT FUNCTIONS ---
+    //LOBBY TEXT FUNCTIONS
     
     EXPORT_API double SendLobbyMessage(const char* msg) {
         if (gSocket == -1) return 5.0;
@@ -91,16 +91,15 @@ extern "C" {
     
     EXPORT_API double ReadLobbyMessage(char* buffer_out, double max_len) {
         if (gSocket == -1) return 0.0;
-        // --- PHASE 1: Try to read new data into the persistent buffer ---
+        //Try to read new data into the persistent buffer
         
-        // 1. NON-BLOCKING CHECK for new data
+        //NON-BLOCKING  using select
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(gSocket, &readfds);
         struct timeval timeout = {0, 0}; 
 
         if (select(gSocket + 1, &readfds, NULL, NULL, &timeout) > 0) {
-            // Data is ready, call recv (which should not block now)
             char temp_buffer[1024];
             memset(temp_buffer, 0, 1024);
             
@@ -116,25 +115,25 @@ extern "C" {
             } else if (bytes == 0) {
                 // Socket disconnected
                 gSocket = -1;
-                return -1.0; // Indicate disconnect
+                return -1.0; 
             }
         }
-        return 0.0; // No complete message found yet (waiting for more data)
+        return 0.0; // No complete message found yet
     }
     
-    // --- 3. TRANSITION TO GAME (ACK Protocol) ---
+    // using ack to make the switch to other network style
     EXPORT_API double WaitForGameStart() {
         if (gSocket == -1) return -1.0;
 
-        uint32_t my_player_id = 99; // Placeholder initialization
+        uint32_t my_player_id = 99;
         
         if (!RecieveData((char*)&my_player_id, sizeof(my_player_id))) {
-            return -2.0; // Error or disconnection during handshake
+            return -2.0;
         }
         return (double)my_player_id;
     }
 
-
+    // adds command to internal queue to be sent on next SendStep
     EXPORT_API void AddLocalCommand(double unit_id, double cmd_type, double tx, double ty) {
         Command cmd;
         cmd.unit_id = (uint32_t)unit_id;
@@ -144,7 +143,7 @@ extern "C" {
         cmd.target_y = ty;
         gCommandBuffer.push_back(cmd);
     }
-
+    //specific command helpers
     EXPORT_API void addPlaceCommand(double unit_type, double tx, double ty) {
         Command cmd;
         cmd.unit_id = 0;
@@ -165,6 +164,7 @@ extern "C" {
         gCommandBuffer.push_back(cmd);
     }
 
+    //BLOCKING: sends all of the queued commands to the server and waits for acknowledgment
     EXPORT_API double SendStep() {
         if (gSocket == -1) return 0.0;
 
@@ -190,10 +190,12 @@ extern "C" {
         return 1.0; 
     }
 
+
+    //checks to see if there are unprocessed commands from the last SendStep
     EXPORT_API double hasUnprocessedCommands() {
         return !unprocessedCommands.empty() ? 1.0 : 0.0;
     }
-
+    // retrieves the next unprocessed command into the provided buffer
     EXPORT_API double GetNextCommand(const char* buffer_address) {
         if (unprocessedCommands.empty()) return 0.0; 
         
@@ -205,7 +207,6 @@ extern "C" {
         
         return 1.0; 
     }
-
     EXPORT_API void Cleanup() {
         if (gSocket != -1) {
             CLOSE_SOCKET(gSocket);

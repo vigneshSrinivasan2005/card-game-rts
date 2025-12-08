@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    cout << "--- RTS SERVER ONLINE ---" << endl;
+    cout << " RTS SERVER ONLINE " << endl;
     cout << "Listening on port " << port << endl;
 
     while (true) {

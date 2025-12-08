@@ -76,7 +76,7 @@ void* HandleClientLobby(void* arg) {
             string cmd;
             ss >> cmd;
 
-            // --- 1. REGISTER ---
+            //  1. REGISTER 
             if (cmd == "REGISTER") {
                 string user;
                 ss >> user;   
@@ -108,7 +108,7 @@ void* HandleClientLobby(void* arg) {
                 continue;
             }
             
-            // --- 2. LIST ---
+            //  2. LIST 
             if (cmd == "LIST") {
                 pthread_mutex_lock(&g_LobbyMutex);
                 string list = "GAMES:\n";
@@ -120,7 +120,7 @@ void* HandleClientLobby(void* arg) {
                 pthread_mutex_unlock(&g_LobbyMutex);
                 SendText(mySock, list);
             }
-            // --- 3. CREATE ---
+            //  3. CREATE 
             else if (cmd == "CREATE") {
                 int newID = g_GameIDCounter++;
                 GameRoom room = { newID, mySock, -1, false, true };
@@ -180,7 +180,7 @@ void* HandleClientLobby(void* arg) {
                     }
                 }
             }
-            // --- 4. JOIN ---
+            //  4. JOIN 
             else if (cmd == "JOIN") {
                 int joinID;
                 ss >> joinID;
@@ -204,7 +204,7 @@ void* HandleClientLobby(void* arg) {
                     shouldCloseSocket = false; // Do not close, Host thread owns it now
                 }
             }
-            // --- 5. CHAT ---
+            //  5. CHAT 
             else if (cmd == "CHAT") {
                 string msg;
                 getline(ss, msg);

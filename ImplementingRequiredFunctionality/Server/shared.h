@@ -14,7 +14,7 @@
 
 using namespace std;
 
-// --- RTS PROTOCOL STRUCTURES ---
+//  RTS PROTOCOL STRUCTURES 
 #pragma pack(push, 1)
 struct Command {
     uint32_t unit_id;      // 0 means no id yet 
@@ -25,7 +25,7 @@ struct Command {
 };
 #pragma pack(pop)
 
-// --- LOBBY STRUCTURES ---
+//  LOBBY STRUCTURES 
 struct GameRoom {
     int id;
     int hostSocket;
@@ -40,7 +40,7 @@ struct User {
 };
 
 
-// --- GLOBAL SHARED STATE ---
+//  GLOBAL SHARED STATE 
 //USER MANAGEMENT
 extern unordered_map<string, User> g_AllUsers; //maps username to user
 extern unordered_map<int, User> connected_Users; // maps socket to user
