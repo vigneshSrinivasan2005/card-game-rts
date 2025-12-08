@@ -4,12 +4,12 @@
 #include <iostream> 
 #include <string>
 
+using namespace std;
 
 // --- Global State ---
 SocketHandle gSocket = -1;
 std::vector<Command> gCommandBuffer;      
 std::vector<Command> unprocessedCommands; 
-static std::string g_ClientBuffer; // Persistent buffer to hold partial messages
 
 // --- Helper ---
 bool RecieveData(char* buffer, int expected_size) {
@@ -21,6 +21,11 @@ bool RecieveData(char* buffer, int expected_size) {
         bytes_received += result;
     }
     return true;
+}
+    
+bool SendText(int sock, string msg){
+    msg += "\n";
+    return send(sock, msg.c_str(), msg.length(), 0) > 0;
 }
 
 extern "C" {
@@ -103,45 +108,17 @@ extern "C" {
             int bytes = recv(gSocket, temp_buffer, 1024, 0);
 
             if (bytes > 0) {
-                // Append all new data to the persistent buffer
-                g_ClientBuffer.append(temp_buffer, bytes);
+                //send to output buffer
+                int to_copy = (bytes < (int)max_len - 1) ? bytes : (int)max_len - 1;
+                memcpy(buffer_out, temp_buffer, to_copy);
+                buffer_out[to_copy] = '\0'; // Null-terminate
+                return (double)to_copy;
             } else if (bytes == 0) {
                 // Socket disconnected
                 gSocket = -1;
                 return -1.0; // Indicate disconnect
             }
         }
-        
-        // --- PHASE 2: Scan the persistent buffer for a complete message ---
-        
-        // Look for the newline delimiter
-        size_t pos = g_ClientBuffer.find('\n');
-
-        if (pos != std::string::npos) {
-            // We found a complete message delimited by '\n'
-
-            // 1. Extract the message (up to and including the newline)
-            std::string message = g_ClientBuffer.substr(0, pos + 1);
-            
-            // 2. Remove the message from the start of the buffer
-            g_ClientBuffer.erase(0, pos + 1);
-
-            // 3. Copy to GameMaker buffer (ensure C-string termination)
-            int copy_len = message.length();
-            if (copy_len > (int)max_len) {
-                // Truncate if message exceeds GML buffer size
-                copy_len = (int)max_len;
-            }
-
-            // Copy the message (including the newline)
-            memcpy(buffer_out, message.c_str(), copy_len);
-            
-            // Ensure C-string termination at the end of the copied data
-            buffer_out[copy_len] = '\0';
-            
-            return (double)copy_len; // Success: Return number of bytes read
-        }
-        
         return 0.0; // No complete message found yet (waiting for more data)
     }
     
