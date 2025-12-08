@@ -28,11 +28,11 @@ string generateLeaderboard() {
     });
 
     // 2. Build the output string
-    string leaderboard = "LEADERBOARD:\n";
+    string leaderboard = "LEADERBOARD:";
     int count = 0;
     for (const auto& u : topUsers) {
-        if (count >= 10) break; // Take only top 10
-        leaderboard += u.username + " - Wins: " + to_string(u.numWins) + "\n";
+        if (count >= 3) break; // Take only top 3
+        leaderboard += u.username + " - Wins: " + to_string(u.numWins) + "|";
         count++;
     }
     return leaderboard;
@@ -46,17 +46,17 @@ void* HandleClientLobby(void* arg) {
     bool inLobby = true;
     bool shouldCloseSocket = true; // Default to true, set to false if we pass socket to Game
 
-    SendText(mySock, "WELCOME. Commands: REGISTER <user> <pass>, LIST, CREATE, JOIN <id>");
+    SendText(mySock, "WELCOME. Commands: REGISTER <user>, LIST, CREATE, JOIN <id>");
     
     //send Leaderboard // Probably should wait until they ack? //TODO SEEMS RISKY
 
-    string leaderboard = generateLeaderboard();
-    SendText(mySock, leaderboard);
-    // 
+    //string leaderboard = generateLeaderboard();
+    //SendText(mySock, leaderboard);
+
     while (inLobby) {
         usleep(10000); // 10 milliseconds sleep 
-
         memset(buffer, 0, 1024);
+
         // I want this call to be nonblocking so that even if no messages are recieve, we can send chat updates and leaderboard updates.
         //So we will use select to check for data before calling recv
         fd_set readfds;
@@ -65,8 +65,11 @@ void* HandleClientLobby(void* arg) {
         timeval timeout = {0, 0}; // Non-blocking
         int ready = select(mySock + 1, &readfds, NULL, NULL, &timeout);
         if (ready > 0 && FD_ISSET(mySock, &readfds)) {
+            cout << "[LOBBY] Prrocessed from " << mySock << ": " << buffer << endl;
             int bytes = recv(mySock, buffer, 1024, 0);
             if (bytes <= 0) break; 
+
+            cout << "[LOBBY] Received from " << mySock << ": " << buffer << endl;
 
             string input(buffer);
             stringstream ss(input);
@@ -78,26 +81,33 @@ void* HandleClientLobby(void* arg) {
                 string user;
                 ss >> user;   
                 pthread_mutex_lock(&g_LobbyMutex);
+                string sendMsg;
                 //add to g_AllUsers and add to connected_Users
                 if (g_AllUsers.count(user)) {
                     // User exists, just assign session data
                     connected_Users[mySock] = g_AllUsers[user];
-                    SendText(mySock, "OK LOGGED_IN " + user + ". Wins: " + to_string(g_AllUsers[user].numWins));
+                    sendMsg = "OK LOGGED_IN " + user + ". Wins: " + to_string(g_AllUsers[user].numWins);
+                    
                 } else {
                     g_AllUsers[user] = User{user, 0};
                     connected_Users[mySock] = g_AllUsers[user];
-                    SendText(mySock, "OK Registered " + user);
+                    sendMsg = "OK Registered " + user + ". Wins: 0";
                 }
                 pthread_mutex_unlock(&g_LobbyMutex);
+                SendText(mySock, sendMsg);
                 continue;
             }
+
             //check if registered
             pthread_mutex_lock(&g_LobbyMutex);
-            if(connected_Users.find(mySock) == connected_Users.end()){
+            bool isRegistered = connected_Users.find(mySock) == connected_Users.end();
+            pthread_mutex_unlock(&g_LobbyMutex);
+
+            if(isRegistered){
                 SendText(mySock, "ERROR Please REGISTER first.");
                 continue;
             }
-            pthread_mutex_unlock(&g_LobbyMutex);
+            
             // --- 2. LIST ---
             if (cmd == "LIST") {
                 pthread_mutex_lock(&g_LobbyMutex);
@@ -112,9 +122,9 @@ void* HandleClientLobby(void* arg) {
             }
             // --- 3. CREATE ---
             else if (cmd == "CREATE") {
-                pthread_mutex_lock(&g_LobbyMutex);
                 int newID = g_GameIDCounter++;
                 GameRoom room = { newID, mySock, -1, false, true };
+                pthread_mutex_lock(&g_LobbyMutex);
                 g_Games.push_back(room);
                 pthread_mutex_unlock(&g_LobbyMutex);
 
@@ -123,14 +133,19 @@ void* HandleClientLobby(void* arg) {
                 // HOST WAITING LOOP
                 while (true) {
                     usleep(100000); // 100ms polling
-                    pthread_mutex_lock(&g_LobbyMutex);
-                    
-                    GameRoom* myRoom = nullptr;
+                    pthread_mutex_lock(&g_LobbyMutex);// VERY LONG LOCK DANGER ZONE
+                    GameRoom myRoom;
+                    bool haveRoom = false;
                     for (auto& g : g_Games) {
-                        if (g.id == newID) { myRoom = &g; break; }
+                        if (g.id == newID) { myRoom = g; haveRoom = true; break; }
                     }
-
-                    if (myRoom && myRoom->isFull) {
+                    pthread_mutex_unlock(&g_LobbyMutex);
+                    if (!haveRoom) {
+                        // Room was deleted, probably due to disconnection
+                        SendText(mySock, "ERROR Room closed.");
+                        break;
+                    }
+                    if (myRoom.isFull) {
                         // Match found!
                         SendText(mySock, "MATCH_START");
                         
@@ -138,26 +153,23 @@ void* HandleClientLobby(void* arg) {
 
                         // 1. Wait for Host's ACK
                         memset(readyBuffer, 0, 1024);
-                        if (recv(myRoom->hostSocket, readyBuffer, 1024, 0) <= 0) {
-                            cerr << "[LOBBY] Host " << myRoom->hostSocket << " disconnected during ACK handshake." << endl;
-                            pthread_mutex_unlock(&g_LobbyMutex);
-                            close(myRoom->hostSocket); close(myRoom->joinerSocket); // Close both on failure
+                        if (recv(myRoom.hostSocket, readyBuffer, 1024, 0) <= 0) {
+                            cerr << "[LOBBY] Host " << myRoom.hostSocket << " disconnected during ACK handshake." << endl;
+                            close(myRoom.hostSocket); close(myRoom.joinerSocket); // Close both on failure
                             return NULL; 
                         }
 
                         // 2. Wait for Joiner's ACK
                         memset(readyBuffer, 0, 1024);
-                        if (recv(myRoom->joinerSocket, readyBuffer, 1024, 0) <= 0) {
-                            cerr << "[LOBBY] Joiner " << myRoom->joinerSocket << " disconnected during ACK handshake." << endl;
-                            pthread_mutex_unlock(&g_LobbyMutex);
-                            close(myRoom->hostSocket); close(myRoom->joinerSocket);
+                        if (recv(myRoom.joinerSocket, readyBuffer, 1024, 0) <= 0) {
+                            cerr << "[LOBBY] Joiner " << myRoom.joinerSocket << " disconnected during ACK handshake." << endl;
+                            close(myRoom.hostSocket); close(myRoom.joinerSocket);
                             return NULL;
                         }
 
                         // Host thread takes over as the Game Server thread
-                        MatchArgs* args = new MatchArgs{ myRoom->hostSocket, myRoom->joinerSocket };
+                        MatchArgs* args = new MatchArgs{ myRoom.hostSocket, myRoom.joinerSocket };
                         
-                        pthread_mutex_unlock(&g_LobbyMutex);
                         
                         // TRANSITION TO GAME
                         HandleMatch(args); 
@@ -166,7 +178,6 @@ void* HandleClientLobby(void* arg) {
                         shouldCloseSocket = false; // HandleMatch closes them
                         break;
                     }
-                    pthread_mutex_unlock(&g_LobbyMutex);
                 }
             }
             // --- 4. JOIN ---
@@ -176,28 +187,22 @@ void* HandleClientLobby(void* arg) {
                 
                 pthread_mutex_lock(&g_LobbyMutex);
                 bool found = false;
-
-
-
                 for (auto& g : g_Games) {
                     if (g.id == joinID && !g.isFull) {
                         g.joinerSocket = mySock;
                         g.isFull = true;
                         found = true;
-                        
-                        // Notify Joiner
-                        SendText(mySock, "MATCH_START");
-                        
-                        // The Joiner thread RETIRES here. 
-                        // The Host thread will run the game for us.
-                        inLobby = false;
-                        shouldCloseSocket = false; // Do not close, Host thread owns it now
                         break;
                     }
                 }
                 pthread_mutex_unlock(&g_LobbyMutex);
                 
-                if (!found) SendText(mySock, "ERROR Game full/missing.");
+                if (!found) {SendText(mySock, "ERROR Game full/missing.");
+                }else{
+                    SendText(mySock, "MATCH_START");
+                    inLobby = false;
+                    shouldCloseSocket = false; // Do not close, Host thread owns it now
+                }
             }
             // --- 5. CHAT ---
             else if (cmd == "CHAT") {
@@ -208,7 +213,27 @@ void* HandleClientLobby(void* arg) {
                 pthread_mutex_lock(&g_LobbyMutex);
                 sendToAllInLobby("CHAT " + connected_Users[mySock].username + ": " + msg);
                 pthread_mutex_unlock(&g_LobbyMutex);
+            }else if(cmd == "LEADERBOARD"){
+                string leaderboard = generateLeaderboard();
+                SendText(mySock, leaderboard);
+            }else if(cmd == "EXIT"){
+                SendText(mySock, "GOODBYE");
+                pthread_mutex_lock(&g_LobbyMutex);
+                connected_Users.erase(mySock);
+                pthread_mutex_unlock(&g_LobbyMutex);
+                break;
+            }else if(cmd == "UNREGISTER"){
+                SendText(mySock, "UNREGISTERED");
+                pthread_mutex_lock(&g_LobbyMutex);
+                g_AllUsers.erase(connected_Users[mySock].username);
+                connected_Users.erase(mySock);
+                pthread_mutex_unlock(&g_LobbyMutex);
+                break;
             }
+            else {
+                SendText(mySock, "ERROR Unknown command.");
+            }
+            
         }
     }
 

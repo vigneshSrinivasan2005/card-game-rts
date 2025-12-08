@@ -102,7 +102,7 @@ void saveAllUsers() {
     // Clean up
     fclose(fd);
 }
-bool isInGame(int sock){
+bool isInGame(int sock){ // checks if the socket is in an active game
     for(const auto& game : g_Games){
         if(game.isActive){
             if(game.hostSocket == sock || game.joinerSocket == sock){
@@ -112,13 +112,13 @@ bool isInGame(int sock){
     }
     return false;
 }
-void sendToAllInLobby(const string& message){
-    pthread_mutex_lock(&g_LobbyMutex);
+void sendToAllInLobby(const string& message){ //Assumes that I have a mutex
+    cout << "[LOBBY] Broadcasting to all in lobby: " << message << endl;
     for(const auto& pair : connected_Users){
+        cout << "[LOBBY] Sending to " << pair.second.username << ": " << message << endl;
         int sock = pair.first;
         if(sock && !isInGame(sock)){
             SendText(sock, message);
         }
     }
-    pthread_mutex_unlock(&g_LobbyMutex);
 }
