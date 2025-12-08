@@ -118,6 +118,10 @@ void* HandleMatch(void* args) {
 
         // D. Check Game Over
         if (game_over_signal) {
+            //set the winner in the user data
+            pthread_mutex_lock(&g_LobbyMutex);
+            g_AllUsers[connected_Users[client1_sock].username].numWins += 1;
+            pthread_mutex_unlock(&g_LobbyMutex);
             cout << "[GAME_INSTANCE] End Game signal received. Closing match." << endl;
             match_running = false;
         }

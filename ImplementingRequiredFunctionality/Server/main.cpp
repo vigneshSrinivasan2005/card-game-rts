@@ -16,6 +16,7 @@ int g_server_sock = -1;
 
 void cleanup_and_exit(int sig) {
     // Remove all active client connections
+    cout << "\nSignal " << sig << " received. Cleaning up..." << endl;
     pthread_mutex_lock(&g_LobbyMutex);
     
     // Iterate over a copy of the keys to avoid issues if the original map changes
