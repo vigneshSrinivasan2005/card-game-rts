@@ -32,6 +32,7 @@ struct GameRoom {
     int joinerSocket;
     bool isFull;
     bool isActive;
+    pthread_cond_t gameOverCond = PTHREAD_COND_INITIALIZER;
 };
 
 struct User {

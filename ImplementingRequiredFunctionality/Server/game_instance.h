@@ -4,6 +4,7 @@
 struct MatchArgs {
     int client1_sock;
     int client2_sock;
+    int gameId;
 };
 
 // The main loop for the actual game

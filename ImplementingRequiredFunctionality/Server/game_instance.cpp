@@ -45,6 +45,7 @@ void *HandleMatch(void *args)
     MatchArgs *match_args = static_cast<MatchArgs *>(args);
     int client1_sock = match_args->client1_sock;
     int client2_sock = match_args->client2_sock;
+    int gameId = match_args->gameId;
     delete match_args;
 
     int clientSockets[2] = {client1_sock, client2_sock};
@@ -155,8 +156,16 @@ void *HandleMatch(void *args)
         }
     }
 
-    cout << "[GAME_INSTANCE] Match ended. Closing sockets." << endl;
-    close(client1_sock);
-    close(client2_sock);
+    cout << "[GAME_INSTANCE] Match ended. Sending broadcast." << endl;
+    //get the game and send the cond signal
+    pthread_mutex_lock(&g_LobbyMutex);
+    for (auto& game : g_Games) {
+        if (game.id == gameId) {
+            pthread_cond_broadcast(&game.gameOverCond);
+            game.isActive = false;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_LobbyMutex);
     return NULL;
 }

@@ -168,14 +168,17 @@ void* HandleClientLobby(void* arg) {
                         }
 
                         // Host thread takes over as the Game Server thread
-                        MatchArgs* args = new MatchArgs{ myRoom.hostSocket, myRoom.joinerSocket };
+                        MatchArgs* args = new MatchArgs{ myRoom.hostSocket, myRoom.joinerSocket, myRoom.id };
                         
                         
                         // TRANSITION TO GAME
                         HandleMatch(args); 
-                        
-                        inLobby = false;
-                        shouldCloseSocket = false; // HandleMatch closes them
+                        //We want to make a new thread for a game instance
+                        // then we want to wait until game is over and continue;
+                        //For both creator and joiner we want to wait until game is over
+                        //only shared variable is the myRoom struct which we should have some signal in to indicate game over
+                        //make a conditional variable and brodcast on game over
+                        //host will continue on its own after the game instance ends
                         break;
                     }
                 }
@@ -187,11 +190,13 @@ void* HandleClientLobby(void* arg) {
                 
                 pthread_mutex_lock(&g_LobbyMutex);
                 bool found = false;
+                pthread_cond_t* gameOverCond;
                 for (auto& g : g_Games) {
                     if (g.id == joinID && !g.isFull) {
                         g.joinerSocket = mySock;
                         g.isFull = true;
                         found = true;
+                        gameOverCond = &g.gameOverCond;
                         break;
                     }
                 }
@@ -200,8 +205,16 @@ void* HandleClientLobby(void* arg) {
                 if (!found) {SendText(mySock, "ERROR Game full/missing.");
                 }else{
                     SendText(mySock, "MATCH_START");
-                    inLobby = false;
-                    shouldCloseSocket = false; // Do not close, Host thread owns it now
+                    
+                    pthread_mutex_lock(&g_LobbyMutex);
+                    GameRoom* myRoomPtr;
+                    for (auto& g : g_Games) {
+                        if (g.id == joinID) { myRoomPtr = &g; break;
+                        }
+                    }
+                    // Wait for game over signal
+                    pthread_cond_wait(&(myRoomPtr->gameOverCond), &g_LobbyMutex);
+                    pthread_mutex_unlock(&g_LobbyMutex);
                 }
             }
             //  5. CHAT 
@@ -221,6 +234,8 @@ void* HandleClientLobby(void* arg) {
                 pthread_mutex_lock(&g_LobbyMutex);
                 connected_Users.erase(mySock);
                 pthread_mutex_unlock(&g_LobbyMutex);
+                inLobby = false;
+                shouldCloseSocket = true;
                 break;
             }else if(cmd == "UNREGISTER"){
                 SendText(mySock, "UNREGISTERED");
